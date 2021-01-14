@@ -1,0 +1,119 @@
+
+initialize() {
+    initializeSLiMModelType("WF");
+    initializeSLiMOptions(keepPedigrees=T);
+    initializeMutationType("m1", 0.5, "f", 0.0); // neutral
+    m1.convertToSubstitution = F;
+    initializeMutationRate(0);
+    initializeGenomicElementType("g1", m1, 1);
+    initializeGenomicElement(g1, 0, L*2-1);
+    rates = c(rep(c(0, 0.5), L-1), 0);
+    ends = seq(from = 1, to = L*2-1, by = 1);    
+    initializeRecombinationRate(rates, ends);
+    defineGlobal('DEBUG', F);
+}
+
+// calculate temporal F
+function(float) get_tempF(float P1, float P2){
+    PP = (P1+P2)/2;
+    top = (P1-P2)^2;
+    bottom = PP - P1*P2;
+    tempF = mean(top/bottom);
+    return(tempF);
+}
+
+// calculate inbreeding Ne
+function(float$) get_inbreeding_Ne(integer K ){
+  sumk = sum(K);
+  sumk2 = sum(K^2);
+  inbreeding_Ne = (sumk-1)/((sumk2/sumk)-1);
+  return(inbreeding_Ne);
+}
+
+function(float$) get_expected_Ne(float weights){
+  n = length(weights);
+  A = mean(weights);
+  B = var(weights)*(n-1)/n;
+  CVsq = B/A^2;
+  expected_Ne = n/(1+CVsq);
+  return(expected_Ne);
+}
+
+function(float$) get_expected_F(float weights, integer G){
+  expected_Ne = get_expected_Ne(weights);
+  expected_F = 1 - (1 - 1/(2*expected_Ne))^(G);
+  return(expected_F);
+}
+
+1 late()  { 
+    sim.readFromPopulationFile("initalize_genotypes.txt");
+    inds = p1.individuals;
+    next_fitness = sample(1:N, size = N); 
+    inds.fitnessScaling = next_fitness;
+    prev_fitness = next_fitness;
+    defineGlobal('prev_fitness', prev_fitness);
+    writeFile("./res.SLiM.txt", "", append=F);
+
+}
+
+2 late() {
+    initial_freqs = sim.mutationFrequencies(NULL);
+    defineGlobal('initial_freqs', initial_freqs);   
+    inds = p1.individuals;
+    // need to set fitness each generation
+    next_fitness = sample(1:N, size = N); 
+    inds.fitnessScaling = next_fitness;
+    prev_fitness = next_fitness;
+    defineGlobal('prev_fitness', prev_fitness);
+    
+    if (DEBUG == T) {
+        catn("Initial freqs :	" +   paste(initial_freqs, sep= '	'));
+    }
+}
+
+3: late() {
+    GEN = sim.generation - 2;   
+    
+    // use current freqs and prev_fitness to get obs/exp Ne and F
+    current_freqs = sim.mutationFrequencies(NULL, sim.mutationsOfType(m1));    
+    tempF = get_tempF(initial_freqs, current_freqs);
+    inb_ne = get_inbreeding_Ne(sim.subpopulations.lifetimeReproductiveOutput);
+    exp_ne = get_expected_Ne(asFloat(prev_fitness));
+    exp_F = get_expected_F(asFloat(prev_fitness), GEN);
+    
+    if (DEBUG == T) {
+        cat("gen " + GEN + "|fit	");
+        catn(paste(prev_fitness, sep= '	'));
+
+        // number of offspring for each parent
+        cat("gen " + GEN + "|off	");
+        catn(paste(sim.subpopulations.lifetimeReproductiveOutput, sep= '	'));
+
+        catn("current freqs :	" +   paste(current_freqs, sep= '	'));
+        catn("tempF = " + tempF);
+        catn("exp_F = " + exp_F);
+        catn("inb_ne = " + inb_ne);
+        catn("exp_ne = " + exp_ne);
+        catn("");
+    }   
+    
+    // set and record fitness for the next generation
+    next_fitness = sample(1:N, size = N); 
+    inds = p1.individuals;
+    inds.fitnessScaling = next_fitness;     
+    prev_fitness = next_fitness;
+    defineGlobal('prev_fitness', prev_fitness);
+    
+    writeFile("./res.SLiM.txt", paste(
+        c(REP, 
+        GEN, 
+        exp_ne, inb_ne, 
+        exp_F, 
+        tempF), sep = ","), 
+        append=T);
+    
+}
+
+23 early() {
+    sim.simulationFinished();
+}
