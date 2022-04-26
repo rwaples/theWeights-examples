@@ -1,0 +1,230 @@
+// TODO reschedule the end of the simulation based on G
+// TODO read in vital from life table
+// TODO validate entries in the life table?
+
+initialize() {
+	// simulation parameters
+	defineConstant("L", 100); // number of recombining loci
+	defineConstant("M", 400); // cohort size
+
+	// defineConstant("lifetable_path", "../vitals.csv");
+	defineConstant("f_sx", c(0.7, 0.7, 0.7, 0.7, 0.7, 0.7, 0.7, 0.7, 0.7, 0.0)); // survival rates (female)
+	defineConstant("f_br", c(0.0, 0.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0)); // relative fecundity (female)
+	defineConstant("f_px", c(0.0, 0.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0)); // sd of fecundity (female)
+	defineConstant("m_sx", c(0.7, 0.7, 0.7, 0.7, 0.7, 0.7, 0.7, 0.7, 0.7, 0.0)); // survival rates (male)
+	defineConstant("m_br", c(0.0, 0.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 9.0, 10.0)); // relative fecundity (male)
+	defineConstant("m_px", c(0.0, 0.0, 3.0, 3.25, 3.5, 3.75, 4.0, 4.25, 4.5, 4.75)); // sd of fecundity (male)
+
+	// rescale relative fecundity within each sex
+	A = sum(f_br * cumProduct(c(1.0, f_sx[0:(length(f_sx)-2)])));
+	defineConstant("f_bx", f_br * 2.0 / A);
+	B = sum(m_br * cumProduct(c(1.0, m_sx[0:(length(m_sx)-2)])));
+	defineConstant("m_bx", m_br * (2.0 / B));
+	//defineConstant("f_bx", c(0.0, 0.0, 1.29939747, 1.2993974, 1.29939747, 1.29939747, 1.29939747, 1.29939747, 1.29939747, 1.29939747));
+	//defineConstant("m_bx", c(0.0, 0.0, 0.80475713, 1.0730095, 1.34126188, 1.60951426, 1.87776663, 2.14601901, 2.41427138, 2.68252376));
+
+	// demographics
+	initializeSLiMModelType("nonWF");
+	initializeSLiMOptions(keepPedigrees=T);
+	initializeSex("A");
+
+	// genetics
+	initializeMutationType("m1", 0.5, "f", 0.0); // neutral
+	m1.convertToSubstitution = F;
+	initializeGenomicElementType("g1", m1, 1.0);
+	initializeGenomicElement(g1, 0, L-1);
+	initializeRecombinationRate(0.5);
+	initializeMutationRate(0);
+
+	HEADER = "Year\tYearlingID\tMomID\tDadID\tMomW\tDadW\tMomAge\tDadAge";
+	writeFile("./pedigree.tsv", HEADER, append=F);
+}
+
+
+reproduction() {
+	inds = p1.individuals;
+	females = inds[inds.sex == "F"];
+	males = inds[inds.sex == "M"];
+	female_weights = get_parental_weights(f_bx, f_px, females.age);
+	male_weights = get_parental_weights(m_bx, m_px, males.age);
+
+	// store weights with each ind for logging
+	for (i in 0:(length(females)-1)) {
+		females[i].setValue("w", female_weights[i]);
+	};
+	for (i in 0:(length(males)-1)) {
+		males[i].setValue("w", male_weights[i]);
+	};
+
+	// catn('males');
+	// catn(male_weights);
+	// catn(males.age);
+	// catn('females');
+	// catn(female_weights);
+
+	// select parents for each of M offspring using weights
+	for (j in seqLen(M)) {
+		fparent = sample(females, 1, weights=female_weights)[0];
+		mparent = sample(males, 1, weights=male_weights)[0];
+		offspring = subpop.addCrossed(fparent, mparent);
+
+		// logging
+		log = paste(
+			sim.generation,
+			offspring.pedigreeID,
+			fparent.pedigreeID,
+			mparent.pedigreeID,
+			fparent.getValue("w"),
+			mparent.getValue("w"),
+			fparent.age,
+			mparent.age,
+			sep="\t"
+		);
+		if (sim.generation > 100)
+			writeFile("./pedigree.tsv", log, append=T);
+	}
+	self.active = 0;
+}
+
+
+function (float)get_parental_weights(float bx, float px, integer ages){
+	CV2 = (px-1)/bx;
+	lambda = 1/CV2;
+	lambda[isInfinite(lambda)] = 1; // px=1 so, weights should all be equal
+	lambda[isNAN(lambda)] = 0;
+	assert(lambda >= 0, message="all px values must be >=1 for THEWEIGHTS to be applied.");
+
+	// get weights for each age
+	weights = float(length(ages));
+	for (i in 0:(length(bx) - 1)) {
+		n = length(ages[ages == i]); // count inds of age i.
+
+		if (n == 0) next; // no ids of this age
+
+		if (bx[i] == 0) { // fecundity = 0
+			iweights = float(n);
+			weights[ages == i] = iweights;
+			next;
+		}
+
+		if (px[i] == 1)	{ // ~WF reproduction within age.
+			iweights = float(n);
+			iweights = iweights + bx[i]; // all inds of age have w = bx[i]
+			weights[ages == i] = iweights;
+			next;
+		}
+
+		else {
+			iweights = rejection_sample_weights(n=n, lambda=lambda[i], tol=0.1);
+			iweights = iweights * bx[i]; // scale weights
+			weights[ages == i] = iweights;
+			};
+	}
+	return weights;
+}
+
+
+function (float)rejection_sample_weights(integer n, float lambda, float tol, [integer attempts=10000]) {
+	if (n == 1) return lambda; // only one ind
+
+	target = 1/lambda;
+	attempts = 0;
+	diff = 1.0;
+	while (abs(diff) > tol) {
+		w = rpois(n, lambda);
+		// v = var(w);
+		// cv2 = v*(n-1)/(n*mean(w)^2); // extra (n-1)/n term?
+		cv_r = sd(w)/mean(w);
+		cv2_r = cv_r * cv_r;
+		diff = (cv2_r-target)/target;
+		attempts = attempts + 1;
+		if (attempts % 500 == 0) tol = tol * 2; // expand tolerance
+	}
+
+	// rescale so that the average rate within this age = 1
+	w = w / mean(w); // average rate is now 1
+	// fix if all w == 0
+	w[isNAN(w)] = 1.0;
+	// if (i == 10000) catn("failed");
+
+	return w;
+}
+
+
+function (void)print_ages(integer x){
+	for (AGE in 0:9) {
+		n_of_age = sum(p1.individuals.age==AGE);
+		catn("Age " + AGE + ": " + n_of_age);
+	};
+
+}
+
+// simulation
+1 early() {
+	sim.addSubpop("p1", M);
+	p1.individuals.age = rdunif(M, min=0, max=8);
+}
+
+100 early() {
+	p1.individuals.genome1.addNewDrawnMutation(m1, 0:(L-1));
+}
+
+early() {
+	// life table based mortality
+	// survival prob to next age determined by *_sx in life table
+	inds = p1.individuals;
+	ages = inds.age;
+	f_idx = inds.sex == "F";
+	m_idx = inds.sex == "M";
+	survival = float(length(inds));
+	survival[f_idx] = f_sx[ages[f_idx]];
+	survival[m_idx] = m_sx[ages[m_idx]];
+	inds.fitnessScaling = survival;
+}
+
+
+5 early() {
+	// count of inds after reproduction, before mortality
+	catn("_____ gen: " + sim.generation + " _(early)_");
+	print_ages(1);
+	catn("Total: " + length(p1.individuals));
+}
+
+5 late() {
+	// // count of inds after mortality
+	catn("_____ gen: " + sim.generation + " _(late)_");
+	print_ages(1);
+	catn("Total: " + length(p1.individuals));
+	}
+
+5:1100 early() {
+	if (sim.generation % 100 != 0) return;
+	// Expected heterozygosity
+	Ehet = calcHeterozygosity(p1.genomes);
+	catn("gen: " + sim.generation + " E(het): " + Ehet);
+
+	// Observed heterozygosity
+	inds = p1.individuals;
+	Ohet = float(length(inds));
+	for (i in 0:(length(inds)-1)) {
+		Ohet[i] = calcPairHeterozygosity(inds[i].genome1, inds[i].genome2);
+	};
+	catn("gen: " + sim.generation + " O(het): " + mean(Ohet));
+
+	// Observed heterozygosity within new cohort
+	inds = p1.individuals;
+	inds = inds[inds.age == 0];
+	Ohet = float(length(inds));
+	for (i in 0:(length(inds)-1)) {
+		Ohet[i] = calcPairHeterozygosity(inds[i].genome1, inds[i].genome2);
+	};
+	catn("gen: " + sim.generation + " O(het) - cohort: " + mean(Ohet));
+
+}
+
+1100 early() {
+	catn("_____ gen: " + sim.generation + " _(early)_");
+	print_ages(1);
+	catn("Total: " + length(p1.individuals));
+	sim.simulationFinished();
+}
