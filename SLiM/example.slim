@@ -6,6 +6,7 @@ initialize() {
 	defineConstant("M", 400); // cohort size
 	defineConstant("G", 1000); // length of simulation in generations
 	defineConstant("G1", 100); // number of burn-in generations
+	defineConstant("SEED", getSeed());
 
 	// Load in life table
 	lifetable = readCSV(path, sep = "\t");
@@ -49,6 +50,13 @@ initialize() {
 
 	PARENTHEADER = "Year\tSex\tID\tW\tAge\tRO";
 	writeFile("./allparents.tsv", PARENTHEADER, append=F);
+
+	HETRECORD = "SEED\tM\tG\tL\tH_E\tH_O\tH_Oc";
+	if (fileExists("./HETRECORD.tsv"))
+		1+1; // pass
+	else {
+		writeFile("./HETRECORD.tsv", HETRECORD, append=F);
+	}
 }
 
 
@@ -188,6 +196,7 @@ function (void)print_ages(integer x){
 	sim.rescheduleScriptBlock(s1, G+G1, G+G1);
 	sim.rescheduleScriptBlock(s2, G+G1, G+G1);
 	sim.rescheduleScriptBlock(s3, G1, G+G1);
+	sim.rescheduleScriptBlock(s4, G+G1, G+G1);
 }
 
 
@@ -210,7 +219,7 @@ early() {
 }
 
 
-early() {
+9999 early() {
 	// log all inds
 	for (ind in p1.individuals) {
 		log = paste(
@@ -269,6 +278,30 @@ s3 99999 early() {
 	};
 	catn("gen: " + sim.generation + " O(het) - cohort: " + mean(Ohet));
 
+}
+
+s4 99999 early() {
+	// Expected heterozygosity
+	Ehet = calcHeterozygosity(p1.genomes);
+
+	// Observed heterozygosity
+	inds = p1.individuals;
+	Ohet = float(length(inds));
+	for (i in 0:(length(inds)-1)) {
+		Ohet[i] = calcPairHeterozygosity(inds[i].genome1, inds[i].genome2);
+	};
+	Ohet = mean(Ohet);
+
+	// Observed heterozygosity within new cohort
+	inds = p1.individuals;
+	inds = inds[inds.age == 0];
+	OhetC = float(length(inds));
+	for (i in 0:(length(inds)-1)) {
+		OhetC[i] = calcPairHeterozygosity(inds[i].genome1, inds[i].genome2);
+	};
+	OhetC = mean(OhetC);
+	log = paste(SEED, asInteger(M), asInteger(G), asInteger(L), Ehet, Ohet, OhetC, sep ='\t');
+	writeFile("./HETRECORD.tsv", log, append=T);
 }
 
 
