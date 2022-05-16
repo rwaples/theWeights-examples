@@ -14,34 +14,7 @@ initialize() {
 
 	// Load in life table
 	lifetable = readCSV(path, sep = ","); // must be set on cmd line
-
-	// to be moved into a function.
-	// lifetable = validate_lifetable(lifetable);
-	catn(lifetable);
-	assert (lifetable.colNames == c("Age", "FemaleSx", "Femalebx", "Femalephi", "MaleSx", "Malebx", "Malephi"));
-	Age = asInteger(lifetable.getValue('Age'));
-	assert (Age[0]==1);
-	FemaleSx = asFloat(lifetable.getValue('FemaleSx'));
-	Femalebx = asFloat(lifetable.getValue('Femalebx'));
-	Femalephi = asFloat(lifetable.getValue('Femalephi'));
-	MaleSx = asFloat(lifetable.getValue('MaleSx'));
-	Malebx = asFloat(lifetable.getValue('Malebx'));
-	Malephi = asFloat(lifetable.getValue('Malephi'));
-	Femalebx = rescale_fecundity(Femalebx, FemaleSx);
-	Malebx = rescale_fecundity(Malebx, MaleSx);
-	catn("Rescaled Fecundity: ----");
-	catn("Femalebx");
-	catn(Femalebx);
-	catn("Malebx");
-	catn(Malebx);
-
-	defineConstant("AGES", Age);
-	defineConstant("F_SX", c(1.0, FemaleSx)); // survival rates (female)
-	defineConstant("F_BX", c(0.0, Femalebx)); // relative fecundity (female)
-	defineConstant("F_PX", c(0.0, Femalephi)); // var/mean of fecundity (female)
-	defineConstant("M_SX", c(1.0, MaleSx)); // survival rates (male)
-	defineConstant("M_BX", c(0.0, Malebx)); // relative fecundity (male)
-	defineConstant("M_PX", c(0.0, Malephi)); // var/mean of fecundity (male)
+	lifetable = validate_lifetable(lifetable);
 
 
 	// demographics
@@ -82,7 +55,33 @@ initialize() {
 }  // end initialize
 
 
-function (float)validate_lifetable(o lifetable) {
+function (o)validate_lifetable(o lifetable) {
+	assert (lifetable.colNames == c("Age", "FemaleSx", "Femalebx", "Femalephi", "MaleSx", "Malebx", "Malephi"));
+	catn(lifetable);
+	Age = asInteger(lifetable.getValue('Age'));
+	assert (Age[0]==1);
+	FemaleSx = asFloat(lifetable.getValue('FemaleSx'));
+	Femalebx = asFloat(lifetable.getValue('Femalebx'));
+	Femalephi = asFloat(lifetable.getValue('Femalephi'));
+	MaleSx = asFloat(lifetable.getValue('MaleSx'));
+	Malebx = asFloat(lifetable.getValue('Malebx'));
+	Malephi = asFloat(lifetable.getValue('Malephi'));
+	Femalebx = rescale_fecundity(Femalebx, FemaleSx);
+	Malebx = rescale_fecundity(Malebx, MaleSx);
+	catn("Rescaled Fecundity: ----");
+	catn("Femalebx");
+	catn(Femalebx);
+	catn("Malebx");
+	catn(Malebx);
+
+	defineConstant("AGES", Age);
+	defineConstant("F_SX", c(1.0, FemaleSx)); // survival rates (female)
+	defineConstant("F_BX", c(0.0, Femalebx)); // relative fecundity (female)
+	defineConstant("F_PX", c(0.0, Femalephi)); // var/mean of fecundity (female)
+	defineConstant("M_SX", c(1.0, MaleSx)); // survival rates (male)
+	defineConstant("M_BX", c(0.0, Malebx)); // relative fecundity (male)
+	defineConstant("M_PX", c(0.0, Malephi)); // var/mean of fecundity (male)
+
 	return lifetable;
 }
 
@@ -193,22 +192,15 @@ function (float)get_heterozygosity(void) {
 // simulation
 1 early() {
 	sim.addSubpop("p1", M);
-	sim.rescheduleScriptBlock(s1, G1, G1);
+	sim.rescheduleScriptBlock(s1, G1, G1);  // make all inds hets - early
 	if (LOG_EACH_GEN) {
-		sim.rescheduleScriptBlock(s20, G1, G+G1);
+		sim.rescheduleScriptBlock(s20, G1, G+G1);  // logging to allparents
 	};
-	sim.rescheduleScriptBlock(s21, G1, G1);
-	sim.rescheduleScriptBlock(s22, G1, G1);
-	sim.rescheduleScriptBlock(s23, G1, G+G1);
-	sim.rescheduleScriptBlock(s99, G+G1);
+	sim.rescheduleScriptBlock(s21, G1, G1);  // print count of inds - early
+	sim.rescheduleScriptBlock(s22, G1, G1);  // print count of inds - late
+	sim.rescheduleScriptBlock(s23, G1, G+G1);  // print heterozygosity - early
+	sim.rescheduleScriptBlock(s99, G+G1);  // end the sim - late
 }
-
-//s1 //  make all inds hets - early
-//s20 // logging to allparents
-//s21 // print count of inds - early
-//s22 // print count of inds - late
-//s23 // print heterozygosity - early
-//s99 // end the sim - late
 
 
 s1 9999 early() {
@@ -318,10 +310,9 @@ s20 9999 early() {
 		);
 		if (sim.generation > G1)
 			writeFile("./allparents.tsv", log, append=T);
+	}
 }
 
-
-}
 
 s21 9999 early() {
 	// count of inds after reproduction, before mortality
@@ -346,9 +337,9 @@ s23 99999 early() {
 	Ehet = het[0];
 	Ohet = het[1];
 	OhetC = het[2];
-	catn("gen: " + sim.generation + " E(het): " + Ehet);
-	catn("gen: " + sim.generation + " O(het): " + Ohet);
-	catn("gen: " + sim.generation + " O(het) - cohort: " + OhetC);
+	catn("gen: " + sim.generation + "(early) E(het): " + Ehet);
+	catn("gen: " + sim.generation + "(early) O(het): " + Ohet);
+	catn("gen: " + sim.generation + "(early) O(het) - cohort: " + OhetC);
 	if (LOG_HET_RECORD) {
 		log = paste(SEED, asInteger(M), asInteger(G), asInteger(L), Ehet, Ohet, OhetC, sep ='\t');
 		writeFile("./HETRECORD.tsv", log, append=T);
